@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mysqlagent — 数据库对话分析助手</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --border: #e2e5ea;
+    --text: #1f2329; --muted: #8a919f; --accent: #185fa5; --accent-light: #e6f1fb;
+    --tool-bg: #f1efe8; --user-bg: #185fa5; --err: #a32d2d; --ok: #0f6e56;
+    --radius: 12px; font-size: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 12px 20px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  }
+  header .logo { width: 28px; height: 28px; border-radius: 8px; background: var(--accent);
+    color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; }
+  header h1 { font-size: 16px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; margin-left: auto; }
+  #apikey {
+    margin-left: 12px; border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 10px; font-size: 12.5px; width: 180px; outline: none; font-family: inherit;
+    background: var(--bg); color: var(--text);
+  }
+  #apikey:focus { border-color: var(--accent); }
+  #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 82%; display: flex; flex-direction: column; gap: 6px; }
+  .msg.user { align-self: flex-end; }
+  .msg.assistant { align-self: flex-start; }
+  .bubble {
+    padding: 10px 14px; border-radius: var(--radius); line-height: 1.65; word-break: break-word;
+  }
+  .msg.user .bubble { background: var(--user-bg); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant .bubble {
+    background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px;
+  }
+  .bubble pre {
+    background: #2c2c2a; color: #e8e6df; padding: 10px 12px; border-radius: 8px;
+    overflow-x: auto; font-family: Consolas, "JetBrains Mono", monospace; font-size: 12.5px; margin: 6px 0;
+  }
+  .bubble code { font-family: Consolas, monospace; font-size: 12.5px; }
+  .bubble :not(pre) > code { background: var(--accent-light); color: var(--accent); padding: 1px 5px; border-radius: 4px; }
+  .bubble table { border-collapse: collapse; margin: 6px 0; font-size: 13px; }
+  .bubble th, .bubble td { border: 1px solid var(--border); padding: 4px 10px; text-align: left; }
+  .bubble th { background: var(--accent-light); }
+  .tool-card {
+    background: var(--tool-bg); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 8px 12px; font-size: 12.5px; max-width: 100%;
+  }
+  .tool-card summary { cursor: pointer; color: var(--muted); user-select: none; }
+  .tool-card summary b { color: var(--text); }
+  .tool-card .status-ok { color: var(--ok); font-weight: 600; }
+  .tool-card .status-err { color: var(--err); font-weight: 600; }
+  .tool-card pre {
+    margin-top: 8px; background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; overflow-x: auto; font-family: Consolas, monospace; font-size: 12px;
+    max-height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+  }
+  .error-bubble { background: #fcebeb; border: 1px solid #f7c1c1; color: var(--err); }
+  footer {
+    background: var(--panel); border-top: 1px solid var(--border); padding: 14px 20px 18px; flex-shrink: 0;
+  }
+  .input-row { display: flex; gap: 10px; align-items: flex-end; }
+  #input {
+    flex: 1; resize: none; border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 10px 14px; font: inherit; line-height: 1.5; max-height: 140px; outline: none;
+    font-family: inherit;
+  }
+  #input:focus { border-color: var(--accent); }
+  #send {
+    background: var(--accent); color: #fff; border: none; border-radius: var(--radius);
+    padding: 10px 22px; font-size: 14px; cursor: pointer; font-weight: 500;
+  }
+  #send:disabled { background: #b4b2a9; cursor: not-allowed; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .cursor { display: inline-block; width: 7px; height: 15px; background: var(--accent);
+    vertical-align: text-bottom; margin-left: 2px; animation: blink 0.9s infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .step-badge { font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">M</div>
+  <h1>mysqlagent</h1>
+  <span class="sub">对话式数据库分析助手 · SSE 流式</span>
+  <input id="apikey" type="password" placeholder="API Key" autocomplete="off">
+</header>
+<div id="chat"></div>
+<footer>
+  <div class="input-row">
+    <textarea id="input" rows="1" placeholder="例如：这个库里有哪些表？各表大约多少行数据？"></textarea>
+    <button id="send">发送</button>
+  </div>
+  <div class="hint">Enter 发送 · Shift+Enter 换行 · 工具仅支持只读查询（SELECT / SHOW / DESCRIBE / EXPLAIN / WITH）</div>
+</footer>
+<script>
+(function () {
+  "use strict";
+  var chatEl = document.getElementById("chat");
+  var inputEl = document.getElementById("input");
+  var sendEl = document.getElementById("send");
+  var busy = false;
+  var lastTraceId = "";
+
+  // 会话 ID 与 API Key：存 localStorage，跨刷新保持
+  var SID_KEY = "mysqlagent_session_id";
+  var KEY_KEY = "mysqlagent_api_key";
+  var sessionId = localStorage.getItem(SID_KEY);
+  if (!sessionId) {
+    sessionId = (crypto.randomUUID ? crypto.randomUUID() : "s-" + Date.now() + "-" + Math.random().toString(36).slice(2));
+    localStorage.setItem(SID_KEY, sessionId);
+  }
+  var apikeyInput = document.getElementById("apikey");
+  apikeyInput.value = localStorage.getItem(KEY_KEY) || "";
+  apikeyInput.addEventListener("change", function () {
+    localStorage.setItem(KEY_KEY, apikeyInput.value.trim());
+    apikeyInput.style.borderColor = apikeyInput.value.trim() ? "" : "var(--err)";
+  });
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function scrollBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
+
+  // 极简 Markdown 渲染：代码块 / 行内代码 / 加粗 / 表格（够聊天用，不引外部库）
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function renderMarkdown(src) {
+    var html = "";
+    var parts = src.split(/```/);
+    for (var i = 0; i < parts.length; i++) {
+      if (i % 2 === 1) {
+        var code = parts[i];
+        var nl = code.indexOf("\n");
+        if (nl >= 0 && /^[\w-]*$/.test(code.slice(0, nl).trim())) code = code.slice(nl + 1);
+        html += "<pre>" + esc(code) + "</pre>";
+      } else {
+        var seg = esc(parts[i]);
+        // 表格：| a | b | 行块
+        var lines = seg.split("\n");
+        var buf = [], out = "";
+        function flushTable() {
+          if (buf.length < 2) { out += buf.join("\n"); buf = []; return; }
+          var rows = buf.filter(function (l) { return !/^\s*\|[\s:|-]+\|\s*$/.test(l); });
+          var t = "<table>";
+          rows.forEach(function (l, ri) {
+            var cells = l.trim().replace(/^\||\|$/g, "").split("|");
+            t += "<tr>";
+            cells.forEach(function (c) {
+              t += (ri === 0 ? "<th>" : "<td>") + inline(c.trim()) + (ri === 0 ? "</th>" : "</td>");
+            });
+            t += "</tr>";
+          });
+          t += "</table>";
+          out += t; buf = [];
+        }
+        lines.forEach(function (l) {
+          if (/^\s*\|.*\|\s*$/.test(l)) buf.push(l); else { flushTable(); out += l + "\n"; }
+        });
+        flushTable();
+        html += out;
+      }
+    }
+    // 行内元素在表格/普通文本里都要处理：最后统一补行内代码与加粗
+    html = inlineBlock(html);
+    return html;
+
+    function inlineBlock(s) {
+      return s
+        .replace(/`([^`\n]+)`/g, function (_, c) { return "<code>" + c + "</code>"; })
+        .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+        .replace(/^###\s+(.+)$/gm, "<b>$1</b>")
+        .replace(/^##\s+(.+)$/gm, "<b>$1</b>")
+        .replace(/^#\s+(.+)$/gm, "<b>$1</b>");
+    }
+    function inline(s) {
+      return s.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    }
+  }
+
+  function addUserMsg(text) {
+    var wrap = el("div", "msg user");
+    var b = el("div", "bubble");
+    b.textContent = text;
+    wrap.appendChild(b);
+    chatEl.appendChild(wrap);
+    scrollBottom();
+  }
+
+  // 返回 { wrap, setContent(text), toolCard() }：assistant 气泡支持打字机追加
+  function addAssistantMsg() {
+    var wrap = el("div", "msg assistant");
+    var b = el("div", "bubble");
+    b.style.display = "none";
+    wrap.appendChild(b);
+    chatEl.appendChild(wrap);
+    var fullText = "";
+    var cursor = null;
+    return {
+      wrap: wrap,
+      appendDelta: function (d) {
+        b.style.display = "";
+        fullText += d;
+        b.innerHTML = renderMarkdown(fullText);
+        if (!cursor) { cursor = el("span", "cursor"); b.appendChild(cursor); }
+        else b.appendChild(cursor);
+        scrollBottom();
+      },
+      finish: function () {
+        if (cursor) cursor.remove();
+        if (fullText) { b.innerHTML = renderMarkdown(fullText); }
+        scrollBottom();
+      }
+    };
+  }
+
+  function addToolCard(ev, step) {
+    var card = el("details", "tool-card");
+    var sum = el("summary");
+    var nameB = el("b", null, ev.name);
+    sum.appendChild(document.createTextNode("工具调用 · "));
+    sum.appendChild(nameB);
+    var badge = el("span", "step-badge", "  step " + step);
+    sum.appendChild(badge);
+    card.appendChild(sum);
+    var argsPre = el("pre", null, prettyJSON(ev.arguments));
+    card.appendChild(argsPre);
+    chatEl.appendChild(card);
+    scrollBottom();
+    card.setAttribute("open", "");
+    return {
+      setResult: function (res) {
+        sum.appendChild(document.createTextNode(" · "));
+        var st = el("span", res.ok ? "status-ok" : "status-err", res.ok ? "✓ " + res.duration_ms + "ms" : "✗ 失败");
+        sum.appendChild(st);
+        var rpre = el("pre", null, (res.ok ? prettyJSON(res.result) : String(res.result)));
+        card.appendChild(rpre);
+        scrollBottom();
+      }
+    };
+  }
+
+  function prettyJSON(s) {
+    try {
+      var v = JSON.parse(s);
+      return typeof v === "string" ? v : JSON.stringify(v, null, 2);
+    } catch (e) { return s; }
+  }
+
+  function addError(text) {
+    var wrap = el("div", "msg assistant");
+    var b = el("div", "bubble error-bubble");
+    b.textContent = "⚠ " + text;
+    wrap.appendChild(b);
+    chatEl.appendChild(wrap);
+    scrollBottom();
+  }
+
+  // 手动解析 SSE：fetch 流中没有原生 EventSource（它不支持 POST）
+  async function sendMessage() {
+    var text = inputEl.value.trim();
+    if (!text || busy) return;
+    busy = true; sendEl.disabled = true; inputEl.value = "";
+    autoGrow();
+
+    addUserMsg(text);
+    var current = null;
+    var pendingTool = null;
+
+    try {
+      var headers = { "Content-Type": "application/json" };
+      var key = localStorage.getItem(KEY_KEY) || "";
+      if (key) headers["Authorization"] = "Bearer " + key;
+      var resp = await fetch("/api/chat", {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify({ session_id: sessionId, message: text })
+      });
+      if (resp.status === 401) {
+        throw new Error("未授权：请在右上角填写正确的 API Key（保存后重新发送）");
+      }
+      if (resp.status === 429) {
+        throw new Error("请求过于频繁，请稍等几秒再试");
+      }
+      if (resp.status === 503) {
+        throw new Error("服务繁忙（并发已满），请稍后再试");
+      }
+      if (resp.status === 400) {
+        var eb = {};
+        try { eb = await resp.json(); } catch (e2) {}
+        throw new Error(eb.error || "请求被拒绝（HTTP 400）");
+      }
+      if (!resp.ok || !resp.body) {
+        var j = {};
+        try { j = await resp.json(); } catch (e) {}
+        throw new Error(j.error || ("HTTP " + resp.status));
+      }
+
+      var reader = resp.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = "";
+
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buf += decoder.decode(chunk.value, { stream: true });
+
+        var idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          var raw = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          var ev = parseSSEBlock(raw);
+          if (!ev) continue;
+
+          if (ev.event === "message") {
+            if (!current) current = addAssistantMsg();
+            current.appendDelta(ev.data.delta || "");
+          } else if (ev.event === "tool_call") {
+            // 工具调用前如果已有文本气泡，先封口
+            if (current) { current.finish(); current = null; }
+            pendingTool = addToolCard(ev.data, ev.data.step);
+          } else if (ev.event === "tool_result") {
+            if (pendingTool) { pendingTool.setResult(ev.data); pendingTool = null; }
+          } else if (ev.event === "meta") {
+            // trace_id / session_id：反馈问题时可引用（不渲染）
+            lastTraceId = ev.data.trace_id || lastTraceId;
+          } else if (ev.event === "ping") {
+            // 心跳保活，无需处理
+          } else if (ev.event === "done") {
+            if (current) { current.finish(); current = null; }
+            var usage = ev.data.usage || {};
+            var reasonTexts = {
+              loop_detected: "检测到工具重复调用失控，已自动停止",
+              budget_exceeded: "已达到单次请求 token 预算上限",
+              max_loops: "已达到最大推理步数上限",
+              timeout: "请求超时",
+              model_error: "模型服务异常",
+              client_abort: "连接中断"
+            };
+            var rt = reasonTexts[ev.data.reason];
+            var line = "完成 · " + ev.data.steps + " 步 · tokens: " +
+              (usage.prompt_tokens || 0) + " in / " + (usage.completion_tokens || 0) + " out";
+            if (rt) line += " · ⚠ " + rt;
+            var tip = el("div", "step-badge", line);
+            if (rt) { tip.style.color = "var(--err)"; }
+            tip.style.marginTop = "-6px";
+            chatEl.appendChild(tip);
+            scrollBottom();
+          } else if (ev.event === "error") {
+            if (current) { current.finish(); current = null; }
+            addError(ev.data.message || "未知错误");
+          }
+        }
+      }
+      if (current) current.finish();
+    } catch (err) {
+      if (current) current.finish();
+      addError(err.message || String(err));
+    } finally {
+      busy = false; sendEl.disabled = false; inputEl.focus();
+    }
+  }
+
+  function parseSSEBlock(raw) {
+    var event = "message", dataLines = [];
+    raw.split("\n").forEach(function (line) {
+      if (line.indexOf("event:") === 0) event = line.slice(6).trim();
+      else if (line.indexOf("data:") === 0) dataLines.push(line.slice(5).trim());
+    });
+    if (!dataLines.length) return null;
+    try { return { event: event, data: JSON.parse(dataLines.join("\n")) }; }
+    catch (e) { return null; }
+  }
+
+  function autoGrow() {
+    inputEl.style.height = "auto";
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + "px";
+  }
+
+  sendEl.addEventListener("click", sendMessage);
+  inputEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  inputEl.addEventListener("input", autoGrow);
+  inputEl.focus();
+})();
+</script>
+</body>
+</html>

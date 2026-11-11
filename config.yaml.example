@@ -1,0 +1,85 @@
+# mysqlagent 配置样例
+# 复制为 config.yaml 后填写真实值；敏感项也可用环境变量覆盖：
+#   LLM_API_KEY / LLM_BASE_URL / LLM_MODEL / DATABASE_DSN / DB_DRIVER
+
+server:
+  addr: ":8080"            # 监听地址
+
+  # 接入认证（生产必配；为空 = 认证关闭，仅限本地开发）
+  # tables 为该身份的表级 ACL（空 = 继承 database.tables 全局清单）
+  api_keys:
+    - key: "sk-local-dev-001"
+      name: "dev-user"
+    - key: "sk-local-dev-002"
+      name: "analyst"
+      tables: ["orders", "order_items", "products"]
+
+  # 跨域白名单（为空 = 同源模式，不输出 CORS 头）
+  cors_origins: []
+  # cors_origins: ["https://app.example.com"]
+
+  request_timeout: 120     # Agent 请求整体超时（秒）
+  heartbeat_interval: 15   # SSE 心跳间隔（秒，防代理空闲断连；0 = 关闭）
+
+llm:
+  # OpenAI 兼容 API 地址（自动拼接 /chat/completions）
+  # DeepSeek:   https://api.deepseek.com/v1
+  # OpenAI:     https://api.openai.com/v1
+  # LMStudio:   http://localhost:1234/v1
+  base_url: "https://api.deepseek.com/v1"
+  api_key: "sk-xxx"
+  model: "deepseek-chat"
+  temperature: 0.0         # 数据分析场景建议 0，输出更稳定
+  max_tokens: 4096
+  call_timeout: 90         # 单次 LLM 调用超时（秒），须小于 request_timeout（逐层收敛）
+  max_retries: 2           # 首 token 前重试次数（429/5xx/连接错误；流开始后不重试）
+
+database:
+  # 驱动：postgres（默认）| mysql
+  driver: "postgres"
+
+  # PostgreSQL DSN（pgx 格式）
+  dsn: "postgres://readonly_user:password@127.0.0.1:5432/your_db?sslmode=disable"
+
+  # MySQL DSN 示例（driver 改为 mysql 时使用）
+  # dsn: "readonly_user:password@tcp(127.0.0.1:3306)/your_db?parseTime=true&timeout=5s"
+
+  max_open_conns: 5
+  max_idle_conns: 2
+  query_limit: 100       # 无 LIMIT 的 SELECT 自动追加 LIMIT 100
+  query_timeout: 15      # 单条查询超时（秒）
+  # 表级 ACL 全局清单（Agent 工具可访问范围；空 = 不限制；
+  # 实际允许 = 全局清单 ∩ 身份清单，权限交集铁律）
+  tables: []
+
+agent:
+  max_loops: 10           # Agent 循环步数上限（防失控）
+  history_limit: 40       # 会话保留的最大消息条数
+  result_max_bytes: 24576 # 工具结果返回给 LLM 的最大字节数
+  budget_tokens: 100000   # 单请求累计 token 预算（达到即熔断）
+  max_tool_repeat: 3      # 同一(工具,参数)重复调用熔断阈值
+
+rate_limit:
+  per_key_qps: 2          # 每个身份每秒允许的请求数
+  per_key_burst: 5        # 每个身份的突发容量
+  max_concurrent: 8       # 全局并发 Agent 会话上限（保护 DB 与 LLM）
+
+guardrails:
+  input:
+    enabled: true         # 提示注入输入护栏（默认开启）
+    max_input_chars: 4000 # 用户输入长度上限
+  tool_isolation:
+    enabled: true         # 工具结果间接注入清洗与隔离（默认开启）
+  pii_masking:
+    enabled: true         # 工具结果 PII 掩码（邮箱/手机/身份证/银行卡，默认开启）
+
+audit:
+  # 审计 JSONL 落盘路径（异步写入；只落哈希与摘要，不落原文）
+  # 为空 = 输出到 stdout 日志
+  output: "/var/log/mysqlagent/audit.jsonl"
+
+store:
+  # SQLite 会话持久化路径（会话消息 + 审计事件同库；WAL 模式）
+  # 为空 = 纯内存模式（重启丢会话）
+  # 开启后可用回放接口：GET /api/sessions/{id}/messages 与 /api/sessions/{id}/audit
+  path: ""                # 例：/var/lib/mysqlagent/sessions.db

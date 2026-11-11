@@ -1,0 +1,16 @@
+# 构建上下文排除（减小镜像构建上下文）
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.git/
+*.db
+*.db-wal
+*.db-shm
+scan/
+tests/
+docs/
+helm/
+scripts/
+config.yaml
+.env

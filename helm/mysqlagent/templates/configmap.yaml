@@ -1,0 +1,55 @@
+{{- /*
+完整的非敏感配置渲染为 config.yaml 并挂载到 /etc/mysqlagent/config.yaml（镜像 CMD 的默认路径）。
+此前 values 里的 agent / rateLimit / guardrails / llm.* / database.* 等大部分项并未传给容器，
+会被默认值静默顶替（例如 guardrails.piiMaskingEnabled=false 不生效）。
+敏感项（llm.api_key / database.dsn / api_keys）不在此处，由 Secret 以环境变量注入并覆盖。
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mysqlagent.name" . }}
+  labels:
+    {{- include "mysqlagent.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      addr: {{ .Values.server.addr | quote }}
+      request_timeout: {{ .Values.server.requestTimeout }}
+      heartbeat_interval: {{ .Values.server.heartbeatInterval }}
+      cors_origins: {{ .Values.server.corsOrigins | default list | toJson }}
+    llm:
+      base_url: {{ .Values.llm.baseUrl | quote }}
+      model: {{ .Values.llm.model | quote }}
+      temperature: {{ .Values.llm.temperature }}
+      max_tokens: {{ .Values.llm.maxTokens }}
+      call_timeout: {{ .Values.llm.callTimeout }}
+      max_retries: {{ .Values.llm.maxRetries }}
+    database:
+      driver: {{ .Values.database.driver | quote }}
+      max_open_conns: {{ .Values.database.maxOpenConns }}
+      max_idle_conns: {{ .Values.database.maxIdleConns }}
+      query_limit: {{ .Values.database.queryLimit }}
+      query_timeout: {{ .Values.database.queryTimeout }}
+      tables: {{ .Values.database.tables | default list | toJson }}
+    agent:
+      max_loops: {{ .Values.agent.maxLoops }}
+      history_limit: {{ .Values.agent.historyLimit }}
+      result_max_bytes: {{ .Values.agent.resultMaxBytes }}
+      budget_tokens: {{ .Values.agent.budgetTokens }}
+      max_tool_repeat: {{ .Values.agent.maxToolRepeat }}
+    rate_limit:
+      per_key_qps: {{ .Values.rateLimit.perKeyQps }}
+      per_key_burst: {{ .Values.rateLimit.perKeyBurst }}
+      max_concurrent: {{ .Values.rateLimit.maxConcurrent }}
+    guardrails:
+      input:
+        enabled: {{ .Values.guardrails.inputEnabled }}
+        max_input_chars: {{ .Values.guardrails.maxInputChars }}
+      tool_isolation:
+        enabled: {{ .Values.guardrails.toolIsolationEnabled }}
+      pii_masking:
+        enabled: {{ .Values.guardrails.piiMaskingEnabled }}
+    audit:
+      output: {{ .Values.audit.output | quote }}
+    store:
+      path: {{ .Values.store.path | quote }}

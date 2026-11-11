@@ -1,0 +1,39 @@
+# mysqlagent (Python) 容器编排（WSL2 部署形态）
+#
+# 本 compose 针对 WSL2 mirrored 网络模式设计：
+#   - PostgreSQL 安装在 WSL 宿主（localhost:5432）
+#   - LMStudio 运行在 Windows 宿主（mirrored 模式下 WSL localhost:1234 直达）
+# 因此使用 host 网络模式，容器直接共享 WSL 网络栈，无需端口转发。
+#
+# 标准 bridge 网络部署（PG / LLM 在其他主机）时：
+#   1. 删除 network_mode: host，改用 ports + extra_hosts: host.docker.internal:host-gateway
+#   2. LLM_BASE_URL / DATABASE_DSN 中的 localhost 改为对应主机地址
+services:
+  mysqlagent:
+    image: mysqlagent:latest
+    build: .
+    container_name: mysqlagent
+    network_mode: host
+    environment:
+      SERVER_ADDR: ":8080"
+      # LMStudio（Windows 宿主，经 mirrored 网络直达）
+      LLM_BASE_URL: "http://localhost:1234/v1"
+      LLM_MODEL: "qwen/qwen3.6-35b-a3b"
+      LLM_API_KEY: "lm-studio"   # LMStudio 不校验，任意非空值
+      # PostgreSQL（WSL 宿主）
+      DB_DRIVER: "postgres"
+      DATABASE_DSN: "postgres://mysqlagent:mysqlagent123@localhost:5432/mysqlagent_demo?sslmode=disable"
+      # 审计 JSONL 落盘（挂载到宿主目录，追加写）
+      AUDIT_OUTPUT: "/var/log/mysqlagent/audit.jsonl"
+      # SQLite 会话持久化（重启不丢会话；回放接口 /api/sessions/{id}/messages）
+      SESSIONS_DB: "/var/lib/mysqlagent/sessions.db"
+    volumes:
+      # 审计日志持久化到 WSL 宿主（目录不存在时自动创建）
+      - mysqlagent-audit:/var/log/mysqlagent
+      # 会话持久化（ReadWriteOnce + 单副本）
+      - mysqlagent-data:/var/lib/mysqlagent
+    restart: unless-stopped
+
+volumes:
+  mysqlagent-audit:
+  mysqlagent-data:

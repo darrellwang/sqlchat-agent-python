@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mysqlagent.name" . }}
+  labels:
+    {{- include "mysqlagent.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mysqlagent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # 配置 / 密钥变更时触发滚动更新
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "mysqlagent.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mysqlagent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # 探针：/api/health 免认证、无副作用，liveness 与 readiness 共用
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          env:
+            - name: SERVER_ADDR
+              value: {{ .Values.server.addr | quote }}
+            - name: REQUEST_TIMEOUT
+              value: {{ .Values.server.requestTimeout | quote }}
+            - name: HEARTBEAT_INTERVAL
+              value: {{ .Values.server.heartbeatInterval | quote }}
+            - name: LLM_BASE_URL
+              value: {{ .Values.llm.baseUrl | quote }}
+            - name: LLM_MODEL
+              value: {{ .Values.llm.model | quote }}
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mysqlagent.name" . }}
+                  key: llm-api-key
+            - name: DB_DRIVER
+              value: {{ .Values.database.driver | quote }}
+            - name: DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mysqlagent.name" . }}
+                  key: database-dsn
+            {{- if .Values.database.tables }}
+            - name: DB_TABLES
+              value: {{ join "," .Values.database.tables | quote }}
+            {{- end }}
+            {{- if .Values.server.apiKeys }}
+            # API Key 属于凭证：走 Secret，不以明文写进 Deployment
+            - name: API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mysqlagent.name" . }}
+                  key: api-keys
+            {{- end }}
+            {{- if .Values.store.path }}
+            - name: SESSIONS_DB
+              value: {{ .Values.store.path | quote }}
+            {{- end }}
+            # Python 运行时：无缓冲日志 + 不写 .pyc（配合 readOnlyRootFilesystem）
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            # 审计 JSONL（readOnlyRootFilesystem 下落 emptyDir）
+            - name: audit-log
+              mountPath: /var/log/mysqlagent
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /etc/mysqlagent
+              readOnly: true
+            {{- if .Values.store.path }}
+            # SQLite 会话持久化：默认挂 emptyDir（重启即失）；
+            # 生产请通过 extraVolumeMounts 换成 PVC（ReadWriteOnce + 单副本）
+            - name: sessions-db
+              mountPath: {{ dir .Values.store.path }}
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: audit-log
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: {{ include "mysqlagent.name" . }}
+        {{- if .Values.store.path }}
+        - name: sessions-db
+          emptyDir: {}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

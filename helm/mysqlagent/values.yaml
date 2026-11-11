@@ -1,0 +1,119 @@
+# Default values for mysqlagent (Python).
+
+replicaCount: 1
+# 注意：会话默认存进程内存（或 SQLite 本地文件），多副本需要:
+#   a) 配置 store.path 为 ReadWriteOnce 卷并固定单副本；或
+#   b) 会话粘性（相同 session_id 路由到同一副本，需前置网关支持）。
+
+image:
+  repository: mysqlagent
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# 服务器
+server:
+  addr: ":8080"
+  requestTimeout: 120
+  heartbeatInterval: 15
+  corsOrigins: []
+  # 接入认证（生产必配；列表外的值将被拒绝）
+  apiKeys: []
+  #  - key: "sk-prod-001"
+  #    name: "analyst"
+  #    tables: ["orders", "products"]   # 表级 ACL：该身份可见的表（空 = 继承 database.tables）
+
+# LLM（OpenAI 兼容端点）
+llm:
+  baseUrl: "https://api.deepseek.com/v1"
+  model: "deepseek-chat"
+  apiKey: ""            # 走 Secret，勿写明文到 values
+  temperature: 0.0
+  maxTokens: 4096
+  callTimeout: 90       # 须小于 server.requestTimeout（逐层收敛）
+  maxRetries: 2
+
+# 数据库（建议只读账号，纵深防御）
+database:
+  driver: "postgres"    # postgres | mysql
+  dsn: ""               # 走 Secret
+  maxOpenConns: 5
+  maxIdleConns: 2
+  queryLimit: 100
+  queryTimeout: 15
+  tables: []            # 表级 ACL 全局清单（空 = 不限制）
+
+# Agent 编排
+agent:
+  maxLoops: 10
+  historyLimit: 40
+  resultMaxBytes: 24576
+  budgetTokens: 100000
+  maxToolRepeat: 3
+
+# 接入层限流
+rateLimit:
+  perKeyQps: 2
+  perKeyBurst: 5
+  maxConcurrent: 8
+
+# 护栏（默认全开）
+guardrails:
+  inputEnabled: true
+  maxInputChars: 4000
+  toolIsolationEnabled: true
+  piiMaskingEnabled: true
+
+# 审计与持久化
+audit:
+  output: "/var/log/mysqlagent/audit.jsonl"
+
+store:
+  path: ""              # SQLite 会话持久化路径；空 = 纯内存（重启丢会话）
+                        # 配置后需挂 ReadWriteOnce 卷到该路径
+
+# 资源（Python 版注意：uvicorn 单进程 asyncio，CPU 需求低于 Go 版；
+#  内存除业务外还有连接池与查询结果缓冲，按实测调整）
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    cpu: 500m
+    memory: 384Mi
+
+# 暴露 /metrics 供 Prometheus 抓取（ServiceMonitor 需 prometheus-operator）
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    # additionalLabels: {}
+
+podAnnotations: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# 追加卷（如把 SQLite 会话库换成 PVC：
+#   extraVolumes: [{name: data, persistentVolumeClaim: {claimName: mysqlagent-data}}]
+#   extraVolumeMounts: [{name: data, mountPath: /var/lib/mysqlagent}]）
+extraVolumes: []
+extraVolumeMounts: []

@@ -1,0 +1,14 @@
+apiVersion: v2
+name: mysqlagent
+description: 对话式数据库分析 AI Agent（只读 SQL 工具集 / SSE 流式 / 表级 ACL / 审计与指标）
+type: application
+version: 0.3.0
+appVersion: "0.3.0"
+keywords:
+  - ai-agent
+  - llm
+  - sse
+  - postgres
+  - mysql
+maintainers:
+  - name: darrell

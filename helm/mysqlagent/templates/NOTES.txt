@@ -1,0 +1,17 @@
+mysqlagent 已部署。
+
+1. 获取集群内地址:
+   {{ include "mysqlagent.name" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+2. 端口转发本地体验（聊天页 http://localhost:8080）:
+   kubectl port-forward svc/{{ include "mysqlagent.name" . }} 8080:{{ .Values.service.port }}
+
+3. 检查状态:
+   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+注意事项:
+  - 认证：{{ if .Values.server.apiKeys }}已配置 {{ len .Values.server.apiKeys }} 个 API Key{{ else }}未配置（认证关闭，仅限评估环境）——生产务必设置 server.apiKeys{{ end }}
+  - 数据库：建议使用只读账号（应用层只读校验 + 数据库权限纵深防御）
+  - 表级 ACL：database.tables 全局清单 + apiKeys[].tables 身份清单（权限交集）
+  - 指标：GET /metrics（Prometheus 文本格式）{{ if .Values.metrics.serviceMonitor.enabled }}，ServiceMonitor 已启用{{ end }}
+  - 会话：{{ if .Values.store.path }}SQLite 持久化（{{ .Values.store.path }}，emptyDir 卷——生产请替换为 PVC）{{ else }}纯内存（重启丢会话；可配置 store.path 开启持久化）{{ end }}
